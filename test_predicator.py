@@ -1,5 +1,5 @@
 import pytest
-from predicator import Rule, import_rules, is_rule
+from predicator import Recipe, Rule, import_rules, is_rule
 from textwrap import dedent
 
 
@@ -19,45 +19,43 @@ class CallableProbe:
         return self.called
 
 
-class TestRule:
+class TestRecipe:
+    class_under_test = Recipe
+
     @pytest.fixture
     def truism(self):
         return CallableProbe(True)
 
     def test_must_be_given_a_callable(self):
         with pytest.raises(AssertionError):
-            Rule(None)
+            self.class_under_test(None)
 
     def test_calls_given_callable(self, truism):
-        rule = Rule(truism)
-        rule()
+        recipe = self.class_under_test(truism)
+        recipe()
         assert truism.called, (
-            "Rule objects should call the given callable."
+            "Recipe objects should call the given callable."
         )
 
     def test_returns_value_from_call(self):
         expected = True
-        rule = Rule(lambda: expected)
-        returned = rule()
+        recipe = self.class_under_test(lambda: expected)
+        returned = recipe()
 
         assert returned == expected, (
-            "Call to a Rule object should return the value from given callable."
+            "Call to a Recipe object should return the value from given "
+            "callable."
         )
 
-    def test_callable_must_return_boolean(self):
-        with pytest.raises(AssertionError):
-            rule = Rule(lambda: "not a boolean")
-            rule()
-
     def test_requires_is_a_tuple(self, truism):
-        assert isinstance(Rule(truism).requires, tuple), (
-            "Rule.requires should return a tuple."
+        assert isinstance(self.class_under_test(truism).requires, tuple), (
+            "Recipe.requires should return a tuple."
         )
 
     def test_requires_returns_names_of_arguments_for_lambda(self):
-        rule = Rule(lambda a, b, c, d: False)
-        assert rule.requires == ('a', 'b', 'c', 'd'), (
-            "Rule.requires should return the names of given lambda arguments."
+        recipe = self.class_under_test(lambda a, b, c, d: False)
+        assert recipe.requires == ('a', 'b', 'c', 'd'), (
+            "Recipe.requires should return the names of given lambda arguments."
         )
 
     def test_requires_returns_names_of_arguments_for_callable_objects(self):
@@ -65,9 +63,9 @@ class TestRule:
             def __call__(a, b, c, d):
                 pass
 
-        rule = Rule(CallableClass())
-        assert rule.requires == ('a', 'b', 'c', 'd'), (
-            "Rule.requires should return the names of given callable object "
+        recipe = self.class_under_test(CallableClass())
+        assert recipe.requires == ('a', 'b', 'c', 'd'), (
+            "Recipe.requires should return the names of given callable object "
             "arguments."
         )
 
@@ -75,18 +73,19 @@ class TestRule:
         def func(a, b, c, d):
             pass
 
-        rule = Rule(func)
-        assert rule.requires == ('a', 'b', 'c', 'd'), (
-            "Rule.requires should return the names of given function arguments."
+        recipe = self.class_under_test(func)
+        assert recipe.requires == ('a', 'b', 'c', 'd'), (
+            "Recipe.requires should return the names of given function "
+            "arguments."
         )
 
     def test_requires_handles_kwonlyargs_correctly(self):
         def func(a, b, *, c=None, d=123):
             pass
 
-        rule = Rule(func)
-        assert rule.requires == ('a', 'b', 'c', 'd'), (
-            "Rule.requires should return the names of given function "
+        recipe = self.class_under_test(func)
+        assert recipe.requires == ('a', 'b', 'c', 'd'), (
+            "Recipe.requires should return the names of given function "
             "arguments, even if some are keyword-only."
         )
 
@@ -95,36 +94,46 @@ class TestRule:
             assert a == 1 and b == 2 and c == 3 and d == 4
             return True
 
-        rule = Rule(func)
+        recipe = self.class_under_test(func)
         try:
-            rule(1, 2, 3, 4)
+            recipe(1, 2, 3, 4)
         except TypeError:
             pytest.fail(
-                "Rule should pass its arguments to the underlying callable."
+                "Recipe should pass its arguments to the underlying callable."
             )
 
     def test_name_returns_name_of_function(self):
-        def example_rule_name():
+        def example_name():
             pass
-        assert Rule(example_rule_name).name == "example_rule_name", (
-            "If Rule was instantiated with a function, Rule.name should return "
-            "the name of the underlying function."
+
+        assert self.class_under_test(example_name).name == "example_name", (
+            "If Recipe was instantiated with a function, Recipe.name should "
+            "return the name of the underlying function."
         )
 
     def test_name_returns_name_of_class_if_given_a_non_function_callable(self):
         class MyClass:
             def __call__(self):
                 pass
-        assert Rule(MyClass()).name == 'MyClass', (
-            "If Rule was instantiated with a non-function callable object, "
-            "Rule.name should return the name of its class."
+        assert self.class_under_test(MyClass()).name == 'MyClass', (
+            "If Recipe was instantiated with a non-function callable object, "
+            "Recipe.name should return the name of its class."
         )
 
     def test_forbids_usage_of_a_class_as_func(self):
         class MyClass:
             pass
         with pytest.raises(AssertionError):
-            Rule(MyClass)
+            self.class_under_test(MyClass)
+
+
+class TestRule(TestRecipe):
+    class_under_test = Rule
+
+    def test_callable_must_return_boolean(self):
+        with pytest.raises(AssertionError):
+            rule = self.class_under_test(lambda: "not a boolean")
+            rule()
 
 
 class TestImportRules:

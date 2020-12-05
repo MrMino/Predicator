@@ -1,14 +1,91 @@
 from inspect import getfullargspec, isclass, isfunction
 from pathlib import Path
 from importlib.util import spec_from_file_location, module_from_spec
-from typing import Callable, List, Union, Any
+from typing import Callable, List, Union, Any, Optional
 from types import ModuleType
 
 
 __version__ = '0.0.1'
 
 
-class Rule:
+class Recipe:
+    """A callable that computes a value of an input of a given name.
+
+    Wraps around a callable, and uses its signature as a specification of what
+    type of input it produces, and what inputs it needs to operate.
+
+    It works in a similar way to pytest fixtures.
+
+    The name of the callable will be interpretted as the name of the input type
+    that it produces.
+    The names of its arguments will be interpretted as the list of names of
+    required input types.
+
+    Attributes
+    ----------
+    requires
+    name
+    """
+
+    def __init__(self, func: Callable):
+        """Initialize Recipe object, perform basic checks.
+
+        Parameters
+        ----------
+        func
+            A callable which will be used to produce the value.
+
+            This function's arguments will be considered its "inputs", i.e. the
+            objects required for the calculation it performs.
+
+        Raises
+        ------
+        AssertionError
+            If ``func`` is a class or not a callable.
+        """
+        assert callable(func), f"{repr(func)} is not callable."
+        assert not isclass(func), f"{repr(func)} is a class."
+        self._func = func
+
+    @property
+    def requires(self) -> List[str]:
+        """The list of inputs required by the rule (its arguments)."""
+        argspec = getfullargspec(self._func)
+        return tuple(argspec.args + argspec.kwonlyargs)
+
+    # XXX: Rule names are not unique!
+    @property
+    def name(self) -> str:
+        """Name of the rule.
+
+        Name of the class of the given callable, or, if given
+        a function, the name from the function's signature.
+        """
+        return (self._func.__name__ if isfunction(self._func)
+                else self._func.__class__.__name__)
+
+    def __call__(self, *args, **kwargs) -> Any:
+        """Use the recipe.
+
+        Passes all of the given arguments to the underlying function.
+
+        Parameters
+        ----------
+        *args
+            Positional arguments to pass to the recipe function.
+        **kwargs
+            Keyword arguments to pass to the recipe function.
+
+        Returns
+        -------
+        Any
+            Recipe output, i.e. the value returned by the underlying function.
+
+        """
+        return self._func(*args, **kwargs)
+
+
+class Rule(Recipe):
     """A callable that computes a value of a logic statement.
 
     Objects of this class provide a streamlined way of usage of predicate
@@ -21,31 +98,8 @@ class Rule:
     name
     """
 
-    def __init__(self, func: Callable):
-        """Initialize a Rule object around a predicate, perform basic checks.
-
-        Parameters
-        ----------
-        func
-            Predicate that will be called by calling this rule. Must be a
-            callable, but not a class.
-
-            This function's arguments will be considered its "inputs", i.e. the
-            objects required for the calculation it performs. See ``requires``
-            attribute.
-
-        Raises
-        ------
-        AssertionError
-            If func is a class or not a callable.
-        """
-
-        assert callable(func), f"{repr(func)} is not callable."
-        assert not isclass(func), f"{repr(func)} is a class."
-        self._func = func
-
     def __call__(self, *args, **kwargs) -> bool:
-        """Call the underlying predicate.
+        """Perform the check on the inputs.
 
         Passes all of the given arguments to the underlying function. Checks
         whether the resulting value is a boolean, and returns it.
@@ -68,28 +122,11 @@ class Rule:
             If the predicate returned a value that is not an instance of bool.
         """
 
-        verdict = self._func(*args, **kwargs)
+        verdict = super().__call__(*args, **kwargs)
         assert isinstance(verdict, bool), (
             f"{repr(self._func)} returned a non-boolean: {repr(verdict)}."
         )
         return verdict
-
-    @property
-    def requires(self) -> List[str]:
-        """The list of inputs required by the rule (its arguments)."""
-        argspec = getfullargspec(self._func)
-        return tuple(argspec.args + argspec.kwonlyargs)
-
-    # XXX: Rule names are not unique!
-    @property
-    def name(self) -> str:
-        """Name of the rule.
-
-        Name of the class of the given callable, or, if given
-        a function, the name from the function's signature.
-        """
-        return (self._func.__name__ if isfunction(self._func)
-                else self._func.__class__.__name__)
 
 
 def import_rules(rulebook_path: Union[str, Path]) -> List[Rule]:
