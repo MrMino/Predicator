@@ -129,7 +129,6 @@ def import_rules(rulebook_path: Union[str, Path]) -> List[Rule]:
     return rules
 
 
-# TODO: Test me.
 def is_rule(member: Any, rulebook: ModuleType) -> bool:
     """Return True if a given module member should be considered a rule."""
     return (

@@ -1,5 +1,5 @@
 import pytest
-from predicator import Rule, import_rules
+from predicator import Rule, import_rules, is_rule
 from textwrap import dedent
 
 
@@ -216,3 +216,28 @@ class TestImportRules:
         assert len(rules) == 1, (
             "Instantiated callable objects should be considered rules too."
         )
+
+
+class TestIsRule:
+    @pytest.fixture
+    def this_module(self):
+        return __import__(self.__module__)
+
+    def test_function_is_rule(self, this_module):
+        def func():
+            pass
+        assert is_rule(func, this_module)
+
+    def test_lambda_is_rule(self, this_module):
+        assert is_rule(lambda: None, this_module)
+
+    class Callable:
+        def __call__(self):
+            pass
+
+    def test_callable_object_is_rule(self, this_module):
+        callable_obj = self.Callable()
+        assert is_rule(callable_obj, this_module)
+
+    def test_class_is_not_rule(self, this_module):
+        assert not is_rule(self.Callable, this_module)
