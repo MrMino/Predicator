@@ -1,7 +1,10 @@
+# Add a glossary: Rule, Recipe, Checklist, Input, Requirement, Ingredients
+from typing import Callable, List, Union, Any, Optional, Set, Tuple
+from importlib.abc import Loader
+
 from inspect import getfullargspec, isclass, isfunction
 from pathlib import Path
 from importlib.util import spec_from_file_location, module_from_spec
-from typing import Callable, List, Union, Any, Optional
 from types import ModuleType
 
 
@@ -27,7 +30,7 @@ class Recipe:
     name
     """
 
-    def __init__(self, func: Callable):
+    def __init__(self, func: Callable, *, name: str = None):
         """Initialize Recipe object, perform basic checks.
 
         Parameters
@@ -46,23 +49,33 @@ class Recipe:
         assert callable(func), f"{repr(func)} is not callable."
         assert not isclass(func), f"{repr(func)} is a class."
         self._func = func
+        self._supplied_name = name
 
     @property
-    def requires(self) -> List[str]:
+    def requires(self) -> Tuple[str, ...]:
         """The list of inputs required by the rule (its arguments)."""
         argspec = getfullargspec(self._func)
         return tuple(argspec.args + argspec.kwonlyargs)
 
-    # XXX: Rule names are not unique!
     @property
     def name(self) -> str:
         """Name of the rule.
 
         Name of the class of the given callable, or, if given
         a function, the name from the function's signature.
+
+        Note
+        ----
+        Rule names are not unique, even if supplied by the signature of the
+        callable.
         """
-        return (self._func.__name__ if isfunction(self._func)
+        return (self._supplied_name if self._supplied_name is not None
+                else self._func.__name__ if isfunction(self._func)
                 else self._func.__class__.__name__)
+
+    @name.setter
+    def name(self, new_name):
+        self._supplied_name = new_name
 
     def __call__(self, *args, **kwargs) -> Any:
         """Use the recipe.
@@ -157,6 +170,9 @@ def import_rules(rulebook_path: Union[str, Path]) -> List[Rule]:
     rulebook_path = Path(rulebook_path)
 
     spec = spec_from_file_location(rulebook_path.stem, rulebook_path.absolute())
+    assert spec.loader is not None
+    assert isinstance(spec.loader, Loader)
+
     rulebook = module_from_spec(spec)
     spec.loader.exec_module(rulebook)
 
@@ -173,3 +189,121 @@ def is_rule(member: Any, rulebook: ModuleType) -> bool:
         and member.__module__ == rulebook.__name__
         and not isclass(member)
     )
+
+
+class Cookbook:
+    """Dynamic list of rule inputs that are required for checks to be performed.
+
+    Used to compute which recipes should be used and in what order, to satisfy
+    requirements of every specified rule.
+
+    A recipe may supply an intermediate input that will feed to other recipes.
+
+    If two recipes exist for the same input type, only the first one in the
+    list will be used.
+
+    Attributes
+    ----------
+    rules : List[Rule]
+        Rules for which the inputs should be computed.
+    recipes: List[Recipes]
+        Recipes which should be used to create the required inputs.
+    required : Set[str]
+        Names of inputs that are required by rules and used recipes.
+    """
+
+    def __init__(
+        self,
+        rules: Optional[List[Rule]] = None,
+        recipes: Optional[List[Recipe]] = None
+    ):
+        if rules is None:
+            rules = []
+        if recipes is None:
+            recipes = []
+        self.rules = rules
+        self.recipes = recipes
+
+    def recipe_for(self, input_name: str) -> Recipe:
+        """Get the recipe that will be used to generate the speicified input.
+
+        Parameters
+        ----------
+        input_name
+            Input that the returned recipe generates.
+
+        Returns
+        -------
+        Recipe
+            Callable that can generate the specified input.
+
+        Raises
+        ------
+        ValueError
+            If there's no recipe for the specified input in this cookbook.
+        """
+        for recipe in self.recipes:
+            if recipe.name == input_name:
+                return recipe
+        else:
+            raise ValueError(f"Recipe for {input_name} is not in the cookbook.")
+
+    def missing_inputs(self, *primary_inputs: str) -> Set[str]:
+        """For given inputs, calculate inputs missing to satisfy requirements.
+
+        Note
+        ----
+        This does not consider duplicate rules - only the first recipe for each
+        input is considered.
+        If an input is specified as primary, the recipe for it is ignored.
+
+        Parameters
+        ----------
+        *primary_inputs
+            Input types that are provided beforehand, i.e. do not require
+            generation by any recipe. These inputs will be removed from the
+            returned set.
+
+        Returns
+        -------
+        Set[str]
+            List of inputs that are required to satisfy the rules (directly or
+            via intermediate recipes), yet there are no known recipes for them
+            in the cookbook.
+
+        Raises
+        ------
+        ValueError
+            If there's a cycle in the recipes that are used to satisfy rules
+            requirements.
+        """
+        recipe_graph = self._generate_used_recipes_graph(primary_inputs)
+        self._ensure_no_recipe_cycles(recipe_graph, primary_inputs)
+        required_for_recipes: Set[str] = set()
+        for recipe in self.recipes:
+            if recipe.name in self.required:
+                required_for_recipes.update(recipe.requires)
+        return (self.required
+                - set(recipe.name for recipe in self.recipes)).union(
+                    required_for_recipes
+                )
+
+    # This one is a bitch.
+    def _ensure_no_recipe_cycles(self, primary_inputs: Tuple[str, ...]):
+        provided: Set[str] = set(primary_inputs)
+        required = self.required - provided
+
+        for checked_input in required:
+            used_recipes = set()
+            next_recipes = {self.recipe_for(checked_input)}
+
+            while True:
+                next_recipes = self._get_next(next_recipes)
+
+
+    @property
+    def required(self) -> Set[str]:
+        required_inputs: Set[str] = set()
+        for rule in self.rules:
+            required_inputs.update(rule.requires)
+        return required_inputs

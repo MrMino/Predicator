@@ -1,5 +1,5 @@
 import pytest
-from predicator import Recipe, Rule, import_rules, is_rule
+from predicator import Recipe, Rule, import_rules, is_rule, Cookbook
 from textwrap import dedent
 
 
@@ -126,6 +126,34 @@ class TestRecipe:
         with pytest.raises(AssertionError):
             self.class_under_test(MyClass)
 
+    def test_name_is_settable(self):
+        try:
+            self.class_under_test(lambda: None).name = "different name"
+        except AttributeError:
+            pytest.fail("Recipe.name attribute should be settable.")
+
+    def test_gives_new_name_after_name_is_set(self):
+        new_name = "different_name"
+        recipe = self.class_under_test(lambda: None)
+        recipe.name = new_name
+        assert recipe.name == new_name, "Newly set name should be memorized."
+
+    def test_init_takes_name_argument(self):
+        try:
+            self.class_under_test(lambda: None, name="supplied name")
+        except TypeError:
+            pytest.fail("Recipe.__init__() should take a 'name' argument.")
+
+    def test_init_name_argument_is_keyword_only(self):
+        with pytest.raises(TypeError):
+            self.class_under_test(lambda: None, "name goes here")
+
+    def test_gives_name_from_init_argument(self):
+        name = "supplied name"
+        assert self.class_under_test(lambda: None, name=name).name == name, (
+            "Recipe.name should be the name supplied to Recipe.__init__()."
+        )
+
 
 class TestRule(TestRecipe):
     class_under_test = Rule
@@ -250,3 +278,192 @@ class TestIsRule:
 
     def test_class_is_not_rule(self, this_module):
         assert not is_rule(self.Callable, this_module)
+
+
+class TestCookbook:
+    class_under_test = Cookbook
+
+    def test_creation_without_params(self):
+        try:
+            self.class_under_test()
+        except TypeError:
+            pytest.fail(
+                "Cookbook class should not require any parameters to be "
+                "instantiated."
+            )
+
+    def test_has_rules_attribute(self):
+        try:
+            self.class_under_test().rules
+        except AttributeError:
+            pytest.fail("Cookbook object should have .rules attribute.")
+
+    def test_without_initialization_rules_should_return_empty_list(self):
+        assert self.class_under_test().rules == [], (
+            "If initialized without any rules, Cookbook.rules should return an "
+            "empty list."
+        )
+
+    def test_if_initialized_should_return_given_rules(self):
+        rules = [Rule(lambda: None) for _ in range(5)]
+        cookbook = self.class_under_test(rules=rules)
+        assert cookbook.rules == rules, (
+            "If rules list given to init, Cookbook.rules should return that "
+            "list."
+        )
+
+    def test_has_recipes_attribute(self):
+        try:
+            self.class_under_test().recipes
+        except AttributeError:
+            pytest.fail("Cookbook object should have .recipes attribute.")
+
+    def test_without_initialization_recipes_should_return_empty_list(self):
+        assert self.class_under_test().recipes == [], (
+            "If initialized without any rules, Cookbook.recipes should return "
+            "an empty list."
+        )
+
+    def test_if_initialized_should_return_given_recipes(self):
+        recipes = [Recipe(lambda: None) for _ in range(5)]
+        cookbook = self.class_under_test(recipes=recipes)
+        assert cookbook.recipes == recipes, (
+            "If recipes list given to init, Cookbook.recipes should return "
+            "that list."
+        )
+
+    def test_recipe_for_raises_value_error_if_no_recipe_found(self):
+        input_name = "some_input"
+        cookbook = self.class_under_test()
+        with pytest.raises(ValueError):
+            cookbook.recipe_for(input_name)
+
+    def test_recipe_for_returns_added_recipe(self):
+        def some_input():
+            pass
+        cookbook = self.class_under_test()
+        recipe = Recipe(some_input)
+        cookbook.recipes.append(recipe)
+
+        assert cookbook.recipe_for(recipe.name) == recipe, (
+            "Cookbook.recipe_for() should return a recipe for the specified "
+            "input."
+        )
+
+    def test_recipe_for_returns_the_first_added_recipe_for_an_input(self):
+        def some_input():
+            pass
+        cookbook = self.class_under_test()
+        recipe = Recipe(some_input)
+        recipe2 = Recipe(some_input)
+        cookbook.recipes.append(recipe)
+        cookbook.recipes.append(recipe2)
+
+        assert cookbook.recipe_for(recipe.name) == recipe, (
+            "If there are multiple recipes for the same input, "
+            "Cookbook.recipe_for() should only return the first one."
+        )
+
+    def test_has_required_attribute(self):
+        cookbook = self.class_under_test()
+        try:
+            cookbook.required
+        except AttributeError:
+            pytest.fail("Cookbook object should have .required attribute")
+
+    def test_without_initialization_required_should_return_empty_set(self):
+        assert self.class_under_test().required == set(), (
+            "Without any recipes added Cookbook.required should return an "
+            "empty list."
+        )
+
+    def test_rules_requirements_show_up_in_required(self):
+        def rule(a, b):
+            pass
+
+        def another_rule(c, d):
+            pass
+
+        cookbook = self.class_under_test(rules=[Rule(rule), Rule(another_rule)])
+        assert cookbook.required == {'a', 'b', 'c', 'd'}, (
+            "Cookbook.required should contain inputs required by every added "
+            "rule."
+        )
+
+    def test_missing_inputs_returns_empty_set_when_uninitialized(self):
+        assert self.class_under_test().missing_inputs() == set(), (
+            "With an uninitialized cookbook, missing_inputs() method should "
+            "return an empty set."
+        )
+
+    def test_without_recipes_missing_inputs_returns_all_required_inputs(self):
+        rules = [Rule(lambda a, b, c: None), Rule(lambda c, d, e: None)]
+        cookbook = self.class_under_test(rules=rules)
+        assert cookbook.missing_inputs() == {'a', 'b', 'c', 'd', 'e'}, (
+            "Without any added recipes, the value returned by "
+            "Cookbook.missing_inputs() should contain inputs required by every "
+            "added rule."
+        )
+
+    def test_adding_a_recipe_for_input_removes_it_from_missing(self):
+        rules = [Rule(lambda a, b, c: None), Rule(lambda c, d, e: None)]
+
+        cookbook = self.class_under_test(rules=rules)
+        cookbook.recipes.append(Recipe(lambda: None, name="c"))
+        cookbook.recipes.append(Recipe(lambda: None, name="e"))
+
+        assert cookbook.missing_inputs() == {'a', 'b', 'd'}, (
+            "Adding a recipe for an input should remove it from the missing "
+            "inputs."
+        )
+
+    def test_input_needed_by_an_used_recipe_is_present_in_missing(self):
+        rules = [Rule(lambda a, b, c: None), Rule(lambda c, d, e: None)]
+
+        cookbook = self.class_under_test(rules=rules)
+        cookbook.recipes.append(Recipe(lambda x, y: None, name="c"))
+
+        assert cookbook.missing_inputs() == {'a', 'b', 'd', 'e', 'x', 'y'}, (
+            "Adding a recipe for an input should add its required inputs to "
+            "the missing inputs, as long as the recipe is used."
+        )
+
+    def test_unused_recipes_inputs_are_not_put_into_missing(self):
+        cookbook = self.class_under_test()
+        cookbook.recipes.append(Recipe(lambda unnecessary: None))
+        assert 'unnecessary' not in cookbook.missing_inputs(), (
+            "If the input generated by a recipe is not used by any rule, "
+            "absent of other recipes, the recipe inputs should not be put into "
+            "missing_inputs()."
+        )
+
+    @pytest.mark.skip
+    def test_inputs_of_transitive_recipes_are_put_into_missing(self):
+        cookbook = self.class_under_test(rules=[Rule(lambda a: None)])
+        cookbook.recipes.append(Recipe(lambda b: None, name='a'))
+        cookbook.recipes.append(Recipe(lambda c: None, name='b'))
+        assert cookbook.missing_inputs() == {'c'}, (
+            "Requirements of recipes that generate indirectly required inputs "
+            "should be taken into account when calling missing_inputs()."
+        )
+
+    def test_cycles_in_used_recipes_are_not_allowed(self):
+        cookbook = self.class_under_test(rules=[Rule(lambda a: None)])
+        cookbook.recipes.append(Recipe(lambda b: None, name='a'))
+        cookbook.recipes.append(Recipe(lambda c: None, name='b'))
+        cookbook.recipes.append(Recipe(lambda a: None, name='c'))
+        with pytest.raises(ValueError):
+            cookbook.missing_inputs()
+
+    def test_cycles_in_unused_recipes_are_allowed(self):
+        cookbook = self.class_under_test(rules=[Rule(lambda x: None)])
+        cookbook.recipes.append(Recipe(lambda b: None, name='a'))
+        cookbook.recipes.append(Recipe(lambda c: None, name='b'))
+        cookbook.recipes.append(Recipe(lambda a: None, name='c'))
+        try:
+            cookbook.missing_inputs()
+        except ValueError:
+            pytest.fail(
+                "When calling missin_inputs(), cycles in the recipes that are "
+                "left unused should be allowed."
+            )
